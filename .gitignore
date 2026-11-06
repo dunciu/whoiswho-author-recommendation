@@ -1,0 +1,26 @@
+# Dataset (download separately, see data/README.md)
+data/*.json
+
+# Generated embeddings, caches, checkpoints
+*.pkl
+*.pt
+cache/
+embedding_cache/
+em_results_hard/
+em_results_soft/
+
+# Figures written to repo root by scripts (curated copies live in results/figures)
+/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
