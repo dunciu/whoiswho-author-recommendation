@@ -1,5 +1,7 @@
 # WhoIsWho Author Recommendation
 
+[![CI](https://github.com/dunciu/whoiswho-author-recommendation/actions/workflows/ci.yml/badge.svg)](https://github.com/dunciu/whoiswho-author-recommendation/actions/workflows/ci.yml)
+
 **Predicting the missing authors of a scientific paper.** Given a paper's title, abstract and year, plus zero, one or two of its known authors, the model ranks every researcher in the network by how likely they are to be a co-author.
 
 The final model, **REACH**, combines three signals with a small learned gating network:
@@ -74,6 +76,9 @@ whoiswho-author-recommendation/
 │   ├── grid_search_results.csv   # fusion hyperparameter grid search
 │   ├── clusters/{hard,soft}/KEYWORDS.txt   # top keywords per EM topic cluster (k=15)
 │   └── figures/                  # charts produced by the experiments
+├── tests/                        # pytest: unit tests + synthetic end-to-end run
+├── .github/workflows/ci.yml      # CI on every push
+├── pyproject.toml
 ├── requirements.txt
 └── README.md
 ```
@@ -158,6 +163,15 @@ python experiments/05_gat_and_graphsage/gatv2_jk.py
 On the first run, SPECTER2 / mpnet / SciBERT weights are downloaded (`reach.py` caches its embeddings as `cache/*.npy`) from Hugging Face and paper embeddings are computed and cached as `*.pkl`. Later runs load the cache. Several stage 02–04 scripts generate synthetic data automatically if `data/pid_to_info_all.json` is missing, which is useful as a quick smoke test.
 
 Hyperparameters (dataset size `SIZES_TO_TEST`, `K_VALUES`, `CONTEXT_LEVELS`, learning rate, dropout and so on) are constants at the top of each script.
+
+### Tests
+
+```bash
+pip install pytest
+pytest -v        # unit tests + an end-to-end synthetic REACH run on CPU (~15 s)
+```
+
+GitHub Actions runs the same suite on every push (`.github/workflows/ci.yml`).
 
 ### Hardware notes
 
