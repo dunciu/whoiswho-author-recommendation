@@ -1,0 +1,11 @@
+[project]
+name = "reach-authorship-completion"
+version = "2.0.0"
+description = "REACH: learning-based paper authorship completion on academic graphs (WhoIsWho)"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Duncan Alexander" }]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
