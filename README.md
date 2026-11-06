@@ -6,7 +6,7 @@ The final model, **REACH**, combines three signals with a small learned gating n
 
 | Engine | What it scores | Implementation |
 |---|---|---|
-| **GNN** | Structural fit in the author–paper graph | 2-layer bipartite **LightGCN** over SPECTER2 paper embeddings + harmonic time encoding, trained with InfoNCE and 2-hop hard negatives |
+| **GNN** | Structural fit in the author–paper graph | 2-layer bipartite **LightGCN** with a learned temporal edge decay, over SPECTER2 paper embeddings + harmonic time encoding + venue / institution features, trained with InfoNCE and 2-hop hard negatives |
 | **SEM** | Topical fit | Cosine similarity of the paper's **SPECTER2** embedding to the 20 most similar training papers, aggregated to their authors |
 | **RB** | Social fit | Co-authorship rules: weighted co-occurrence with the known authors, with exponential time decay since their last joint paper |
 
@@ -18,21 +18,39 @@ The project developed over about 10 months, from TF-IDF baselines through transf
 
 ## Results
 
-The test set is a **temporal split**: papers are sorted by year, the first 80% are used for training and the newest 20% for testing. Every test paper has at least 3 authors after k-core pruning. For each one, 0, 1 or 2 authors are revealed as context, and the model has to rank the rest.
+### v1 (the numbers in the August 2026 draft, `reach_lightgcn_fusion.py`)
 
-Combined (REACH) model, as reported on the project poster (`analysis/plot_poster_results.py`):
+NDCG@K on the temporal test split:
 
-| Known authors | NDCG@5 | NDCG@10 | NDCG@20 | Recall@5 | Recall@10 | Recall@20 |
-|---|---|---|---|---|---|---|
-| 0 (cold start) | 0.145 | 0.163 | 0.192 | 0.113 | 0.172 | 0.242 |
-| 1 | 0.418 | 0.441 | 0.467 | 0.360 | 0.454 | 0.524 |
-| 2 | 0.437 | 0.464 | 0.491 | 0.412 | 0.509 | 0.589 |
+| Known authors | K | GNN | RB | SEM | REACH |
+|---|---|---|---|---|---|
+| 0 | 5 | 0.090 | 0.013 | **0.173** | 0.162 |
+| 0 | 10 | 0.100 | 0.016 | **0.185** | 0.173 |
+| 1 | 5 | 0.171 | 0.271 | 0.162 | **0.278** |
+| 1 | 10 | 0.182 | 0.287 | 0.176 | **0.295** |
+| 2 | 5 | 0.196 | 0.297 | 0.150 | **0.299** |
+| 2 | 10 | 0.209 | 0.316 | 0.164 | **0.318** |
 
-![Poster results](results/figures/combined_performance_large_text.png)
+In v1 the fusion layer was trained on papers whose edges were already in the graph, so it over-trusted the graph experts. It lost to plain semantic search with no known authors, and only just beat the co-authorship rules once authors were known.
 
-The fusion grid search (`results/grid_search_results.csv`, 216 runs over learning rate, dropout, social weight and static vs dynamic fusion) is where the final settings came from: LR = 5e-4, dropout = 0.2, and a social weight that rises with context (0.1 / 0.5 / 0.7). Dynamic fusion beat static fusion whenever at least one author was known.
+### v2 (`reach.py`)
 
----
+v2 fixes that leak and adds the missing components and baselines:
+
+- **Leak-free fusion:** chronological 70 / 10 / 20 split. The fusion layer is trained on the 10% validation slice, whose papers are not in the graph.
+- **Venue and institution features (VIF):** SPECTER2 embeddings of venue names and each author's affiliations, reduced with PCA to 128 dimensions.
+- **Learned temporal decay (TEW):** edge weights `exp(-λ (T − year))` in the LightGCN adjacency, with λ learned end to end.
+- **Proper k-core pruning:** counts are recomputed on the pruned author lists each iteration.
+- **Baselines:** the fixed 0.4/0.4/0.2 WhoIsWho ensemble, plus a static ensemble grid-searched per context level on validation.
+- **Ablations:** fusion without the GNN, SEM or RB expert, plus `--no-vif`, `--no-tew` and `--linear-time`.
+- **Reporting:** multiple seeds, paired-bootstrap 95% CIs and p-values, dataset statistics (Table I), learned λ and the average gate weights per context.
+
+To reproduce the paper tables:
+
+```bash
+python experiments/07_reach_final/run_experiments.py --seeds 0 1 2      # full model + 3 ablations
+# → results/runs/<config>_seed<N>/  and  results/summary.md (Tables I, III, IV + significance)
+```
 
 ## Repository structure
 
@@ -46,7 +64,7 @@ whoiswho-author-recommendation/
 │   ├── 04_hetero_gnn_recommender/# Jan–Feb 2026: hetero GNN recommender, k-core subsets, NDCG evaluation
 │   ├── 05_gat_and_graphsage/     # Feb–May 2026: GATv2 + jumping knowledge, context masks, GraphSAGE + Borda fusion
 │   ├── 06_ablations/             # Apr–May 2026: author-only graph vs author+paper hetero graph
-│   └── 07_reach_final/           # Final model: LightGCN + SEM + RB with learned fusion (REACH)
+│   └── 07_reach_final/           # REACH: reach.py (v2), run_experiments.py, aggregate_runs.py, v1 script
 ├── analysis/
 │   ├── dataset_stats.py          # papers / authors / venues / institutions per period (2010–15, 2015–20, 2010–20)
 │   └── plot_poster_results.py    # regenerates the poster results figure
@@ -82,7 +100,10 @@ whoiswho-author-recommendation/
 | `05_.../graphsage_borda_full_dataset.py` | `11-march.py` | Bipartite GraphSAGE on the full dataset with contextual Borda fusion of GNN + SEM + rules |
 | `06_ablations/author_only_gat.py` | `author-only.py` | Ablation: GAT on the author–author graph only |
 | `06_ablations/author_paper_hetero_gat.py` | `author-paper.py` | Ablation: hetero GAT with author→paper, paper→author and author→author edges |
-| `07_reach_final/reach_lightgcn_fusion.py` | `10-march.py` | **Final REACH model**, with ablations (no-SEM, no-RB), a static 0.4/0.4/0.2 baseline and per-component timing |
+| `07_reach_final/reach_lightgcn_fusion.py` | `10-march.py` | REACH **v1** (draft results), with ablations (no-SEM, no-RB), a static 0.4/0.4/0.2 baseline and per-component timing |
+| `07_reach_final/reach.py` | – | **REACH v2**: leak-free fusion, VIF, learned decay, tuned static baseline, ablation flags, significance tests |
+| `07_reach_final/run_experiments.py` | – | Runs seeds × {full, noVIF, noTEW, linearTE}, then aggregates |
+| `07_reach_final/aggregate_runs.py` | – | Builds `results/summary.md` (mean ± std tables) from all runs |
 
 ---
 
@@ -117,18 +138,24 @@ data/pid_to_info_all.json
 **Run every script from the repository root.** Data paths are relative to the root, and embedding caches (`*.pkl`), model checkpoints (`*.pt`) and figures are written there too (git ignores them).
 
 ```bash
-# Dataset statistics
+# 1-minute smoke test on synthetic data (CPU is fine, no dataset needed)
+python experiments/07_reach_final/reach.py --synthetic 3000 --epochs 20 --fusion-papers 200
+
+# Final REACH v2 model, one seed (GPU strongly recommended)
+python experiments/07_reach_final/reach.py --seed 0
+
+# Faster iteration on a subset
+python experiments/07_reach_final/reach.py --seed 0 --max-papers 60000 --max-test-papers 5000
+
+# All seeds and ablations, then the summary tables
+python experiments/07_reach_final/run_experiments.py --seeds 0 1 2
+
+# Dataset statistics, earlier stages
 python analysis/dataset_stats.py
-
-# Final REACH model (full dataset, SPECTER2 embeddings, GPU strongly recommended)
-python experiments/07_reach_final/reach_lightgcn_fusion.py
-
-# Any earlier stage, for example
-python experiments/01_tfidf_baselines/tfidf_kmeans_ndcg.py
 python experiments/05_gat_and_graphsage/gatv2_jk.py
 ```
 
-On the first run, SPECTER2 / mpnet / SciBERT weights are downloaded from Hugging Face and paper embeddings are computed and cached as `*.pkl`. Later runs load the cache. Several stage 02–04 scripts generate synthetic data automatically if `data/pid_to_info_all.json` is missing, which is useful as a quick smoke test.
+On the first run, SPECTER2 / mpnet / SciBERT weights are downloaded (`reach.py` caches its embeddings as `cache/*.npy`) from Hugging Face and paper embeddings are computed and cached as `*.pkl`. Later runs load the cache. Several stage 02–04 scripts generate synthetic data automatically if `data/pid_to_info_all.json` is missing, which is useful as a quick smoke test.
 
 Hyperparameters (dataset size `SIZES_TO_TEST`, `K_VALUES`, `CONTEXT_LEVELS`, learning rate, dropout and so on) are constants at the top of each script.
 
@@ -144,9 +171,10 @@ Hyperparameters (dataset size `SIZES_TO_TEST`, `K_VALUES`, `CONTEXT_LEVELS`, lea
 
 - **Preprocessing:** iterative **k-core pruning**. Authors must appear on ≥ 3 papers and papers must keep ≥ 3 such authors, repeated until the graph converges, which removes noise from one-off author IDs.
 - **Text encoder:** `allenai/specter2_base` (sentence-transformers) on title + abstract. Earlier stages compare SciBERT, SPECTER, all-mpnet-base-v2 and all-MiniLM-L6-v2.
-- **Time:** learnable sinusoidal (harmonic) year encoding concatenated to paper features. In the rule engine, co-authorship strength decays as `exp(-0.138 · Δyears)`.
+- **Time:** learnable sinusoidal (harmonic) year encoding concatenated to paper features. Graph edges are weighted by `exp(-λ · age)` with λ learned (v2). In the rule engine, co-authorship strength decays as `exp(-0.138 · Δyears)`.
 - **Training:** InfoNCE loss with friends-of-friends hard negatives and edge dropout for regularisation.
-- **Evaluation:** NDCG@K and Recall@K for K up to 500, at 0, 1 and 2 known authors, on the temporal test split.
+- **Evaluation:** NDCG@K and Recall@K at 0, 1 and 2 known authors, on the newest 20% of papers. Candidates are authors seen in the training graph, and every test paper keeps ≥ 3 in-graph authors.
+- **Author identity caveat:** if a record has no author `id`, the author's **name string** is used as the ID. WhoIsWho exists precisely because names are ambiguous, so check which field your copy of the data provides.
 
 ## Acknowledgements
 

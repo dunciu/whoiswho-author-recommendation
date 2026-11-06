@@ -5,6 +5,7 @@ data/*.json
 *.pkl
 *.pt
 cache/
+results/runs/
 embedding_cache/
 em_results_hard/
 em_results_soft/
